@@ -1,141 +1,208 @@
 import { Service, PlatformAccessory, CharacteristicValue } from 'homebridge';
 
-import { ExampleHomebridgePlatform } from './platform';
+import { ACControllerHomebridgePlatform } from './platform';
 
-/**
- * Platform Accessory
- * An instance of this class is created for each accessory your platform registers
- * Each accessory may expose multiple services of different service types.
- */
-export class ExamplePlatformAccessory {
-  private service: Service;
+module.exports = (api) => {
+  api.registerAccessory('ACControllerHomebridgePlugin', ThermostatAccessory);
+};
 
-  /**
-   * These are just used to create a working example
-   * You should implement your own code to track the state of your accessory
-   */
-  private exampleStates = {
-    On: false,
-    Brightness: 100,
-  };
+class ACControllerThermostatAccessory {
 
-  constructor(
-    private readonly platform: ExampleHomebridgePlatform,
-    private readonly accessory: PlatformAccessory,
-  ) {
+  constructor(log, config, api) {
+      this.log = log;
+      this.config = config;
+      this.api = api;
 
-    // set accessory information
-    this.accessory.getService(this.platform.Service.AccessoryInformation)!
-      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Default-Model')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
+      this.Service = this.api.hap.Service;
+      this.Characteristic = this.api.hap.Characteristic;
 
-    // get the LightBulb service if it exists, otherwise create a new LightBulb service
-    // you can create multiple services for each accessory
-    this.service = this.accessory.getService(this.platform.Service.Lightbulb) || this.accessory.addService(this.platform.Service.Lightbulb);
+      // extract name from config
+      this.name = config.name;
 
-    // set the service name, this is what is displayed as the default name on the Home app
-    // in this example we are using the name we stored in the `accessory.context` in the `discoverDevices` method.
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.exampleDisplayName);
+      // create a new Thermostat service
+      this.service = new this.Service(this.Service.Thermostat);
 
-    // each service must implement at-minimum the "required characteristics" for the given service type
-    // see https://developers.homebridge.io/#/service/Lightbulb
+      // create handlers for required characteristics
+      this.service.getCharacteristic(this.Characteristic.CurrentHeatingCoolingState)
+        .onGet(this.handleCurrentHeatingCoolingStateGet.bind(this));
 
-    // register handlers for the On/Off Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.On)
-      .onSet(this.setOn.bind(this))                // SET - bind to the `setOn` method below
-      .onGet(this.getOn.bind(this));               // GET - bind to the `getOn` method below
+      this.service.getCharacteristic(this.Characteristic.TargetHeatingCoolingState)
+        .onGet(this.handleTargetHeatingCoolingStateGet.bind(this))
+        .onSet(this.handleTargetHeatingCoolingStateSet.bind(this));
 
-    // register handlers for the Brightness Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.Brightness)
-      .onSet(this.setBrightness.bind(this));       // SET - bind to the 'setBrightness` method below
+      this.service.getCharacteristic(this.Characteristic.CurrentTemperature)
+        .onGet(this.handleCurrentTemperatureGet.bind(this));
 
-    /**
-     * Creating multiple services of the same type.
-     *
-     * To avoid "Cannot add a Service with the same UUID another Service without also defining a unique 'subtype' property." error,
-     * when creating multiple services of the same type, you need to use the following syntax to specify a name and subtype id:
-     * this.accessory.getService('NAME') || this.accessory.addService(this.platform.Service.Lightbulb, 'NAME', 'USER_DEFINED_SUBTYPE_ID');
-     *
-     * The USER_DEFINED_SUBTYPE must be unique to the platform accessory (if you platform exposes multiple accessories, each accessory
-     * can use the same subtype id.)
-     */
+      this.service.getCharacteristic(this.Characteristic.TargetTemperature)
+        .onGet(this.handleTargetTemperatureGet.bind(this))
+        .onSet(this.handleTargetTemperatureSet.bind(this));
 
-    // Example: add two "motion sensor" services to the accessory
-    const motionSensorOneService = this.accessory.getService('Motion Sensor One Name') ||
-      this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor One Name', 'YourUniqueIdentifier-1');
+      this.service.getCharacteristic(this.Characteristic.TemperatureDisplayUnits)
+        .onGet(this.handleTemperatureDisplayUnitsGet.bind(this))
+        .onSet(this.handleTemperatureDisplayUnitsSet.bind(this));
 
-    const motionSensorTwoService = this.accessory.getService('Motion Sensor Two Name') ||
-      this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor Two Name', 'YourUniqueIdentifier-2');
-
-    /**
-     * Updating characteristics values asynchronously.
-     *
-     * Example showing how to update the state of a Characteristic asynchronously instead
-     * of using the `on('get')` handlers.
-     * Here we change update the motion sensor trigger states on and off every 10 seconds
-     * the `updateCharacteristic` method.
-     *
-     */
-    let motionDetected = false;
-    setInterval(() => {
-      // EXAMPLE - inverse the trigger
-      motionDetected = !motionDetected;
-
-      // push the new value to HomeKit
-      motionSensorOneService.updateCharacteristic(this.platform.Characteristic.MotionDetected, motionDetected);
-      motionSensorTwoService.updateCharacteristic(this.platform.Characteristic.MotionDetected, !motionDetected);
-
-      this.platform.log.debug('Triggering motionSensorOneService:', motionDetected);
-      this.platform.log.debug('Triggering motionSensorTwoService:', !motionDetected);
-    }, 10000);
   }
 
   /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, turning on a Light bulb.
+   * Handle requests to get the current value of the "Current Heating Cooling State" characteristic
    */
-  async setOn(value: CharacteristicValue) {
-    // implement your own code to turn your device on/off
-    this.exampleStates.On = value as boolean;
+  async handleCurrentHeatingCoolingStateGet() {
+    this.log.debug('Triggered GET CurrentHeatingCoolingState');
 
-    this.platform.log.debug('Set Characteristic On ->', value);
+    const discoveryURL = 'http://192.168.1.210/getState';
+    const response = await fetch(discoveryURL, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      // this.log.error('response.statusText')
+      this.log.error('Error fetching state');
+    }
+
+    const devices: { sku: string; device: string; deviceName: string }[] = [];
+    if (response.body !== null) {
+      if (response.body === "On") {
+        return this.Characteristic.CurrentHeatingCoolingState.COOL;
+      } else if (reesponse.body === "Off") {
+        return = this.Characteristic.CurrentHeatingCoolingState.OFF;
+      }
+    }
+  }
+
+
+  /**
+   * Handle requests to get the current value of the "Target Heating Cooling State" characteristic
+   */
+  handleTargetHeatingCoolingStateGet() {
+    this.log.debug('Triggered GET TargetHeatingCoolingState');
+
+    const discoveryURL = 'http://192.168.1.210/getState';
+    const response = await fetch(discoveryURL, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      // this.log.error('response.statusText')
+      this.log.error('Error fetching state');
+    }
+
+    const devices: { sku: string; device: string; deviceName: string }[] = [];
+    if (response.body !== null) {
+      if (response.body === "On") {
+        return this.Characteristic.CurrentHeatingCoolingState.COOL;
+      } else if (reesponse.body === "Off") {
+        return = this.Characteristic.CurrentHeatingCoolingState.OFF;
+      }
+    }
   }
 
   /**
-   * Handle the "GET" requests from HomeKit
-   * These are sent when HomeKit wants to know the current state of the accessory, for example, checking if a Light bulb is on.
-   *
-   * GET requests should return as fast as possible. A long delay here will result in
-   * HomeKit being unresponsive and a bad user experience in general.
-   *
-   * If your device takes time to respond you should update the status of your device
-   * asynchronously instead using the `updateCharacteristic` method instead.
-
-   * @example
-   * this.service.updateCharacteristic(this.platform.Characteristic.On, true)
+   * Handle requests to set the "Target Heating Cooling State" characteristic
    */
-  async getOn(): Promise<CharacteristicValue> {
-    // implement your own code to check if the device is on
-    const isOn = this.exampleStates.On;
+  handleTargetHeatingCoolingStateSet(value) {
+    this.log.debug('Triggered SET TargetHeatingCoolingState:' value);
 
-    this.platform.log.debug('Get Characteristic On ->', isOn);
+    if (value === this.Characteristic.CurrentHeatingCoolingState.COOL) {
+      const discoveryURL = 'http://192.168.1.210/turnOn';
+      const response = await fetch(discoveryURL, {
+        method: 'GET',
+      });
 
-    // if you need to return an error to show the device as "Not Responding" in the Home app:
-    // throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      if (!response.ok) {
+        // this.log.error('response.statusText')
+        this.log.error('Error turning on');
+      }
 
-    return isOn;
+      this.log.debug(response.body);
+    } else {
+      const discoveryURL = 'http://192.168.1.210/turnOff';
+      const response = await fetch(discoveryURL, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        // this.log.error('response.statusText')
+        this.log.error('Error turning off');
+      }
+
+      this.log.debug(response.body);
+    }
   }
 
   /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, changing the Brightness
+   * Handle requests to get the current value of the "Current Temperature" characteristic
    */
-  async setBrightness(value: CharacteristicValue) {
-    // implement your own code to set the brightness
-    this.exampleStates.Brightness = value as number;
+  handleCurrentTemperatureGet() {
+    this.log.debug('Triggered GET CurrentTemperature');
 
-    this.platform.log.debug('Set Characteristic Brightness -> ', value);
+    // set this to a valid value for CurrentTemperature
+    const currentValue = -270;
+
+    return currentValue;
   }
+
+
+  /**
+   * Handle requests to get the current value of the "Target Temperature" characteristic
+   */
+  handleTargetTemperatureGet() {
+    this.log.debug('Triggered GET TargetTemperature');
+
+    // set this to a valid value for TargetTemperature
+    const currentValue = 10;
+
+    return currentValue;
+  }
+
+  /**
+   * Handle requests to set the "Target Temperature" characteristic
+   */
+  handleTargetTemperatureSet(value) {
+    this.log.debug('Triggered SET TargetTemperature:' value);
+  }
+
+  /**
+   * Handle requests to get the current value of the "Temperature Display Units" characteristic
+   */
+  handleTemperatureDisplayUnitsGet() {
+    this.log.debug('Triggered GET TemperatureDisplayUnits');
+
+    // set this to a valid value for TemperatureDisplayUnits
+    const currentValue = this.Characteristic.TemperatureDisplayUnits.FARENHEIT;
+
+    return currentValue;
+  }
+
+  /**
+   * Handle requests to set the "Temperature Display Units" characteristic
+   */
+  handleTemperatureDisplayUnitsSet(value) {
+    this.log.debug('Triggered SET TemperatureDisplayUnits:' value);
+  }
+
+  async discoverDevices() {
+    const discoveryURL = 'https://openapi.api.govee.com/router/api/v1/user/devices';
+    const response = await fetch(discoveryURL, {
+      method: 'GET',
+      headers: {
+        'Govee-API-Key': this.config.key,
+      }});
+
+    if (!response.ok) {
+      // this.log.error('response.statusText')
+      this.log.error('Error fetching devices');
+    }
+
+    const devices: { sku: string; device: string; deviceName: string }[] = [];
+    if (response.body !== null) {
+      const responseJSON = await response.json();
+      for (const device of responseJSON.data) {
+        devices.push({
+          'sku': device.sku,
+          'device': device.device,
+          'deviceName': device.deviceName,
+        });
+      }
+    }
 
 }
